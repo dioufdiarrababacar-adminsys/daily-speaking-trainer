@@ -486,7 +486,7 @@
     applyTheme();
     const R = { home, connecting, topic, speaking, timeup, feedback, followup, recap, micDenied, settings: settingsScreen, progress, notebook: notebookScreen }[S.screen];
     $app.innerHTML = R();
-    window.scrollTo(0, 0);
+    if (S.screen !== render.last) { window.scrollTo(0, 0); $app.firstElementChild.classList.add('enter'); render.last = S.screen; }
     const c = S.call;
     if (c && (S.screen === 'speaking' || S.screen === 'timeup' || S.screen === 'topic')) updateClock();
     if (S.screen === 'speaking') drawWave(null);
@@ -506,7 +506,7 @@
         '<div><div class="name">' + esc(p.name) + '<small>' + esc(coachRole(k)) + '</small></div>' + (sel ? '<div class="voice">' + esc(coachVoice(k)) + ' · ' + lang().label + '</div>' : '') + '</div></button>';
     }).join('');
     return '<div class="screen"><div class="page">' +
-      '<div class="topbar"><div class="brand"><i></i>' + (isDesktop() ? t.appNameLong : t.appName) + '</div><div style="display:flex;gap:8px;align-items:center">' +
+      '<div class="topbar"><div class="brand" aria-label="' + t.appNameLong + '"><i></i></div><div style="display:flex;gap:8px;align-items:center">' +
         '<span class="streak">🔥 ' + t.days(st.current) + '</span>' +
         '<button class="icon-btn" data-action="nav" data-to="progress" aria-label="' + t.progress + '" title="' + t.progress + '">📈</button>' +
         '<button class="icon-btn" data-action="nav" data-to="notebook" aria-label="' + t.notebook + '" title="' + t.notebook + '">📓</button>' +
@@ -654,7 +654,7 @@
   function recap() {
     const t = T(), c = S.call, s = sessions[sessions.length - 1];
     const bars = [12, 22, 30, 16, 26, 34, 14, 24, 18, 30, 12, 22].map((h, i) => '<i style="height:' + h + 'px" class="' + (i < 4 ? 'on' : '') + '"></i>').join('');
-    return '<div class="screen dark-zone"><div class="page recap-wrap" style="align-items:center;min-height:100dvh">' +
+    return '<div class="screen dark-zone"><div class="page recap-wrap" style="align-items:center;min-height:100vh;min-height:100svh">' +
       '<div class="label" style="color:var(--bar-muted);letter-spacing:.14em">' + t.callEnded + '</div>' +
       '<div style="width:180px;height:180px;border-radius:40px;overflow:hidden">' + AV.render(settings.coach, 'encourage') + '</div>' +
       '<div class="serif" style="font-size:22px;text-align:center">' + esc(t.bye) + '</div>' +
@@ -763,7 +763,7 @@
   }
   function quizScreen() {
     const t = T(), q = S.quiz, n = q.items[q.i];
-    return '<div class="screen"><div class="page" style="max-width:520px;justify-content:center;min-height:100dvh">' +
+    return '<div class="screen"><div class="page" style="max-width:520px;justify-content:center;min-height:100vh;min-height:100svh">' +
       '<div class="topbar"><div class="label">' + t.question(q.i + 1, q.items.length) + '</div><button class="icon-btn" data-action="quiz-quit" aria-label="' + t.close + '">✕</button></div>' +
       '<div class="quiz"><div class="sub">' + t.howToFix + '</div><div class="q"><s>' + esc(n.wrong) + '</s></div>' +
         (q.show ? '<div class="a">→ ' + esc(n.right) + '</div>' + (n.tag ? '<div class="mono" style="font-size:12px;color:var(--muted)">' + esc(n.tag) + '</div>' : '') : '') + '</div>' +
