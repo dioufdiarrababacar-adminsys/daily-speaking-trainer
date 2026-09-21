@@ -5,8 +5,7 @@
   "type": "module",
   "description": "Coach-avatar en appel vidéo pour parler chaque jour en français, anglais ou espagnol.",
   "scripts": {
-    "start": "node --env-file=../../../.env server.js",
-    "start:local": "node server.js"
+    "start": "node --env-file-if-exists=.env --env-file-if-exists=../../../.env server.js"
   },
   "engines": { "node": ">=20.6" }
 }

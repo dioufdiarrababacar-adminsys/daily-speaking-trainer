@@ -3,7 +3,7 @@
 > Ton coach-avatar en appel vidéo : parler 1 à 5 minutes par jour en français, anglais ou espagnol, avec un chrono, des pistes, du vocabulaire et un retour du coach.
 
 **Statut :** v0.1, application fonctionnelle, feedback IA via Gemini (tier gratuit), optionnel.
-**Inputs :** maquette Claude Design dans `context/import/Daily Speaking Trainer.dc.html` (+ `Avatar.dc.html`, `support.js`).
+**Inputs :** maquette Claude Design (conservée dans le workspace Jarvis, `context/import/`).
 
 ---
 
@@ -25,12 +25,14 @@ Tout est stocké dans le `localStorage` du navigateur. Rien ne part vers un serv
 
 ### Option A : avec le feedback IA (recommandé)
 
-Prérequis : Node 20.6+ et `GEMINI_API_KEY` renseignée dans le `.env` à la racine du workspace (clé gratuite sur aistudio.google.com, sans carte bancaire).
+Prérequis : Node 22.9+ et une `GEMINI_API_KEY` (clé gratuite sur aistudio.google.com, sans carte bancaire).
 
 ```bash
-cd livrables/applications/2026-09-daily-speaking-trainer
+cp .env.example .env     # puis renseigne GEMINI_API_KEY
 npm start
 ```
+
+Dans le workspace Jarvis, le `.env` à la racine du workspace est lu automatiquement si le dossier n'a pas le sien.
 
 Aucune installation : zéro dépendance. Ouvre ensuite http://localhost:3000. Le serveur sert `src/` et expose `POST /api/feedback`, qui envoie la transcription à Gemini (`gemini-3.5-flash-lite` par défaut, avec `gemini-3.6-flash` puis `gemini-3.1-flash-lite` en secours si le modèle est saturé ; ordre modifiable via `DST_MODEL`, liste séparée par des virgules) et renvoie un JSON structuré (points forts, corrections taguées, tournures, relance).
 
