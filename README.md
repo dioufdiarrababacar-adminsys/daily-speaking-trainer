@@ -42,6 +42,16 @@ Le tier gratuit de Gemini est limité en requêtes par minute et par jour : si l
 
 Ouvre directement `src/index.html` dans Chrome ou Edge. Tout fonctionne sauf les corrections IA : l'app le signale et bascule sur les mesures locales.
 
+### Option C : en ligne sur Netlify
+
+Le dépôt contient un `netlify.toml` : `src/` est publié tel quel et `netlify/functions/api.js` remplace `server.js` pour `/api/health` et `/api/feedback` (même logique, partagée dans `lib/feedback.js`).
+
+1. Sur app.netlify.com : **Add new site → Import an existing project → GitHub**, choisir `daily-speaking-trainer`. Les réglages de build sont lus depuis `netlify.toml`, rien à saisir.
+2. **Site configuration → Environment variables** : ajouter `GEMINI_API_KEY` (et, optionnel, `DST_MODEL`).
+3. **Deploy**. L'URL Netlify est en HTTPS, donc le micro et la reconnaissance vocale fonctionnent.
+
+Les fonctions Netlify gratuites sont limitées à 10 s : la fonction borne chaque appel Gemini à 8 s et l'enchaînement des modèles à 9 s. Au-delà, l'app bascule sur les mesures locales pour ce tour.
+
 ---
 
 ## Compatibilité navigateur
@@ -70,7 +80,10 @@ Le chrono démarre à la première détection de voix (seuil sur le niveau du mi
 ├── README.md
 ├── package.json         # scripts seulement, aucune dépendance
 ├── .env.example
-├── server.js            # statique + POST /api/feedback → Gemini (Node, ESM, fetch natif)
+├── netlify.toml         # déploiement Netlify (publish src/, fonctions)
+├── server.js            # serveur local : statique + /api/* (Node, ESM)
+├── lib/feedback.js      # logique Gemini partagée (serveur local et Netlify Function)
+├── netlify/functions/api.js  # /api/health et /api/feedback en serverless
 └── src/
     ├── index.html
     ├── styles.css       # tokens clair/sombre, composants, layouts mobile (375) et desktop (1024+)
