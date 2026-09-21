@@ -1,0 +1,12 @@
+{
+  "name": "daily-speaking-trainer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Coach-avatar en appel vidéo pour parler chaque jour en français, anglais ou espagnol.",
+  "scripts": {
+    "start": "node --env-file=../../../.env server.js",
+    "start:local": "node server.js"
+  },
+  "engines": { "node": ">=20.6" }
+}
