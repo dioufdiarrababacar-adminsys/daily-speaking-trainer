@@ -14,7 +14,7 @@
   };
   const settings = Object.assign({
     coach: 'lea', lang: 'fr', level: 'B2', duration: 2, interests: ['Voyage', 'Cuisine'], objective: 'free',
-    theme: 'light', sendAudio: true, localMode: false, topicHistory: [], reminder: null
+    theme: 'light', sendAudio: true, localMode: false, saveRecordings: true, topicHistory: [], reminder: null
   }, store.get('dst.settings', {}));
   let sessions = store.get('dst.sessions', []);
   let notebook = store.get('dst.notebook', []);
@@ -23,7 +23,14 @@
   if (!settings.v2) { if (settings.theme === 'system') settings.theme = 'light'; settings.v2 = 1; saveSettings(); }
 
   // ============================================================ État
-  const S = { screen: 'home', overlay: null, call: null, quiz: null, notebookFilter: 'all', aiAvailable: null, addingInterest: false, toast: null };
+  const S = {
+    screen: 'home', overlay: null, call: null, quiz: null, notebookFilter: 'all', aiAvailable: null, addingInterest: false, toast: null,
+    recUsage: undefined, confirmingClear: false, confirmClearTimer: null,
+    // Lecture de l'historique audio (écran Progression) : au plus un <audio> détaché à la fois, jamais inséré dans le DOM
+    // (donc jamais coupé par un re-render qui remplace $app.innerHTML), un `token` invalide les résolutions obsolètes
+    // si l'utilisateur enchaîne les clics avant qu'un blob ait fini de se charger.
+    playback: { token: 0, sessionId: null, idx: 0, audio: null, url: null }
+  };
 
   // ============================================================ Utilitaires
   const T = () => I18N[settings.lang] || I18N.fr;
@@ -31,6 +38,8 @@
   const pad = (n) => String(n).padStart(2, '0');
   const fmt = (sec) => Math.floor(sec / 60) + ':' + pad(Math.floor(sec % 60));
   const fmtLong = (sec) => { const m = Math.floor(sec / 60), s = Math.floor(sec % 60); return m ? m + ' min' + (s ? ' ' + pad(s) : '') : s + ' s'; };
+  // Unités KB/MB volontairement non traduites : usage technique compris dans les 3 langues de l'app.
+  const fmtBytes = (n) => n < 1024 ? n + ' B' : n < 1024 * 1024 ? Math.round(n / 1024) + ' KB' : (n / (1024 * 1024)).toFixed(1) + ' MB';
   const coach = () => AV.PEOPLE[settings.coach] || AV.PEOPLE.lea;
   const coachRole = (k) => (T().coach[k] || ['', ''])[0];
   const coachVoice = (k) => (T().coach[k] || ['', ''])[1];
@@ -275,6 +284,7 @@
   // ============================================================ Appel
   function newCall() {
     return {
+      id: Date.now() + '-' + Math.random().toString(36).slice(2, 6),
       topic: pickTopic(), turn: 1, phase: 'connecting', targetSec: settings.duration * 60,
       elapsed: 0, spokenSec: 0, started: false, transcript: '', interim: '', prompt: '',
       turns: [], corrections: [], feedback: null, feedbackError: null, loadingFeedback: false,
@@ -376,11 +386,16 @@
     audio.stopSR();
     const blob = await audio.stopRecording();
     if (blob && blob.size) { if (c.audioUrl) URL.revokeObjectURL(c.audioUrl); c.audioUrl = URL.createObjectURL(blob); c.audioSec = c.elapsed; }
+    // Sauvegarde durable (IndexedDB) du tour, sans attendre : l'écriture se termine en tâche de fond
+    // pendant que l'utilisateur voit le feedback ; finishCall() attend cette promesse avant de clore l'appel.
+    const recordingIdPromise = (settings.saveRecordings && blob && blob.size)
+      ? DST_REC.save({ sessionId: c.id, turn: c.turn, blob, mimeType: blob.type, durationSec: c.elapsed })
+      : Promise.resolve(null);
     const text = (c.transcript + ' ' + c.interim).trim();
     const words = text ? text.split(/\s+/).length : 0;
     const fillers = text ? (text.match(lang().fillers) || []).length : 0;
     const minutes = Math.max(c.spokenSec, 1) / 60;
-    c.turns.push({ prompt: c.prompt, transcript: text, elapsed: c.elapsed, spokenSec: c.spokenSec, wpm: words ? Math.round(words / minutes) : 0, fillers, words });
+    c.turns.push({ prompt: c.prompt, transcript: text, elapsed: c.elapsed, spokenSec: c.spokenSec, wpm: words ? Math.round(words / minutes) : 0, fillers, words, recordingIdPromise });
   }
 
   async function timeUp() {
@@ -450,18 +465,20 @@
     if (c.phase === 'speaking') { endTurn().then(finishCall); return; }
     finishCall();
   }
-  function finishCall() {
+  async function finishCall() {
     const c = S.call;
     clearInterval(c.timer); cancelAnimationFrame(c.raf); clearTimeout(c.reactTimer);
     audio.close();
     if (!c.turns.length) { S.call = null; go('home'); return; }
     if (!c.saved) {
       c.saved = true;
+      const recIds = await Promise.all(c.turns.map((t) => t.recordingIdPromise || Promise.resolve(null)));
       sessions.push({
-        id: Date.now(), date: new Date().toISOString(), coach: settings.coach, lang: settings.lang, level: settings.level,
+        id: c.id, date: new Date().toISOString(), coach: settings.coach, lang: settings.lang, level: settings.level,
         wallSec: Math.round((Date.now() - c.wallStart) / 1000), spokenSec: Math.round(c.turns.reduce((a, t) => a + t.spokenSec, 0)),
         turns: c.turns.length, corrections: c.corrections, topic: c.topic.text,
-        metrics: { wpm: Math.round(c.turns.reduce((a, t) => a + t.wpm, 0) / c.turns.length), fillers: c.turns.reduce((a, t) => a + t.fillers, 0) }
+        metrics: { wpm: Math.round(c.turns.reduce((a, t) => a + t.wpm, 0) / c.turns.length), fillers: c.turns.reduce((a, t) => a + t.fillers, 0) },
+        recordings: c.turns.map((t, i) => ({ id: recIds[i], turn: i + 1, sec: Math.round(t.spokenSec) })).filter((r) => r.id)
       });
       store.set('dst.sessions', sessions);
     }
@@ -479,7 +496,7 @@
   }
 
   // ============================================================ Rendu
-  function go(screen) { S.screen = screen; render(); }
+  function go(screen) { if (S.screen === 'progress' && screen !== 'progress' && S.playback.sessionId) stopPlayback(); S.screen = screen; render(); }
   function renderIfScreen(s) { if (S.screen === s) render(); }
 
   function render() {
@@ -703,6 +720,12 @@
   // ---------- Personnaliser
   function settingsScreen() {
     const t = T();
+    // Chargement paresseux de l'espace utilisé par les enregistrements, une fois par entrée dans l'écran.
+    if (S.recUsage === undefined) {
+      S.recUsage = null;
+      DST_REC.usage().then((u) => { S.recUsage = u; renderIfScreen('settings'); });
+    }
+    const recUsageText = S.recUsage == null ? '…' : (S.recUsage.available ? t.recStorageUsed(fmtBytes(S.recUsage.bytes), S.recUsage.count) : t.recStorageUnknown);
     const chips = D.INTERESTS.concat(settings.interests.filter((i) => !D.INTERESTS.includes(i))).map((i) => {
       const on = settings.interests.includes(i);
       return '<button class="chip' + (on ? ' on' : '') + '" data-action="interest" data-v="' + esc(i) + '" aria-pressed="' + on + '">' + (on ? '✓ ' : '') + esc(t.interestLabels[i] || i) + '</button>';
@@ -716,9 +739,58 @@
       '<div class="card" style="display:flex;flex-direction:column;gap:12px"><div class="label">' + t.privacy + '</div>' +
         '<button class="toggle-row" data-action="toggle" data-v="sendAudio" aria-pressed="' + settings.sendAudio + '"><span class="toggle' + (settings.sendAudio ? ' on' : '') + '"><i></i></span><div class="txt"><strong>' + t.sendAudio + '</strong><small>' + t.sendAudioSub + '</small></div></button>' +
         '<button class="toggle-row" data-action="toggle" data-v="localMode" aria-pressed="' + settings.localMode + '"><span class="toggle' + (settings.localMode ? ' on' : '') + '"><i></i></span><div class="txt"><strong>' + t.localModeT + '</strong><small>' + t.localModeSub + '</small></div></button>' +
+        '<button class="toggle-row" data-action="toggle" data-v="saveRecordings" aria-pressed="' + settings.saveRecordings + '"><span class="toggle' + (settings.saveRecordings ? ' on' : '') + '"><i></i></span><div class="txt"><strong>' + t.saveRecT + '</strong><small>' + t.saveRecSub + '</small></div></button>' +
         '<div class="sub" style="font-size:13px">' + t.server + ' : ' + (S.aiAvailable === true ? '<b style="color:var(--lime-ring)">' + t.connected + '</b>' : S.aiAvailable === false ? '<b style="color:var(--danger)">' + t.unreachable + '</b> (' + t.launch + ' <span class="mono">npm start</span>)' : t.untested) + ' · <button class="btn btn-ghost" style="min-height:0;padding:0;font-size:13px;text-decoration:underline" data-action="ping">' + t.test + '</button></div></div>' +
+      '<div class="card" style="display:flex;flex-direction:column;gap:10px"><div class="label">' + t.recStorage + '</div>' +
+        '<div class="sub" style="font-size:14px">' + recUsageText + '</div>' +
+        '<button class="btn btn-danger-outline" data-action="clear-recordings">' + (S.confirmingClear ? t.confirmClear : t.clearRecordings) + '</button></div>' +
       '</div></div>';
   }
+
+  // ---------- Historique audio (lecture depuis Progression)
+  // Un seul <audio> vivant à la fois, jamais dans le DOM (donc jamais coupé par un re-render). `token`
+  // ignore les résolutions IndexedDB devenues obsolètes (double-clic pendant un chargement en cours).
+  function stopPlayback() {
+    S.playback.token++;
+    if (S.playback.audio) { try { S.playback.audio.pause(); } catch {} S.playback.audio.onended = null; }
+    if (S.playback.url) URL.revokeObjectURL(S.playback.url);
+    S.playback.sessionId = null; S.playback.idx = 0; S.playback.audio = null; S.playback.url = null;
+  }
+  function playHistory(sessionId) {
+    if (S.playback.sessionId === sessionId && S.playback.audio) {
+      if (S.playback.audio.paused) S.playback.audio.play(); else S.playback.audio.pause();
+      render();
+      return;
+    }
+    stopPlayback();
+    const s = sessions.find((x) => x.id === sessionId);
+    if (!s || !s.recordings || !s.recordings.length) return;
+    const myToken = S.playback.token;
+    S.playback.sessionId = sessionId; S.playback.idx = 0;
+    render();
+    playHistoryTurn(s, myToken);
+  }
+  async function playHistoryTurn(s, myToken) {
+    if (myToken !== S.playback.token) return;
+    const rec = s.recordings[S.playback.idx];
+    if (!rec) { stopPlayback(); render(); return; }
+    const blob = await DST_REC.getBlob(rec.id);
+    if (myToken !== S.playback.token) return;
+    if (!blob) { stopPlayback(); render(); return; }
+    const url = URL.createObjectURL(blob);
+    const el = new Audio(url);
+    S.playback.audio = el; S.playback.url = url;
+    el.onended = () => {
+      if (myToken !== S.playback.token) return;
+      URL.revokeObjectURL(url);
+      S.playback.idx += 1;
+      if (S.playback.idx < s.recordings.length) playHistoryTurn(s, myToken);
+      else { stopPlayback(); render(); }
+    };
+    el.play();
+    render();
+  }
+  const historyPlaying = (s) => S.playback.sessionId === s.id && S.playback.audio && !S.playback.audio.paused;
 
   // ---------- Progression
   function progress() {
@@ -736,7 +808,10 @@
     const last = sessions.slice(-3).reverse();
     const monthName = now.toLocaleDateString(lang().bcp, { month: 'long', year: isDesktop() ? 'numeric' : undefined });
     const calendar = '<div class="card" style="border-radius:24px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-size:14px;font-weight:700;text-transform:capitalize">' + monthName + '</div><div class="mono" style="font-size:13px;color:var(--muted)">' + t.practiced(practiced) + '</div></div><div class="heat">' + heat + '</div></div>';
-    const calls = '<div style="display:flex;flex-direction:column;gap:8px">' + (last.length ? last.map((s) => '<div class="call-row">' + avatar(s.coach, 'neutral') + '<div class="m"><strong>' + esc(AV.PEOPLE[s.coach].name) + '</strong> · ' + D.LANGS[s.lang].label + ' · ' + s.level + '<small>' + relDay(s.date) + ' · ' + fmtLong(s.spokenSec) + '</small></div><div class="p mono" style="font-size:11px">' + (s.metrics.wpm || '–') + '</div></div>').join('') : '<div class="empty">' + t.noCalls + '</div>') + '</div>';
+    const playBtn = (s) => (s.recordings && s.recordings.length)
+      ? '<button class="rec-play' + (historyPlaying(s) ? ' on' : '') + '" data-action="play-history" data-session="' + s.id + '" aria-label="' + t.playCall + '">' + (historyPlaying(s) ? '❚❚' : '▶') + '</button>'
+      : '';
+    const calls = '<div style="display:flex;flex-direction:column;gap:8px">' + (last.length ? last.map((s) => '<div class="call-row">' + avatar(s.coach, 'neutral') + '<div class="m"><strong>' + esc(AV.PEOPLE[s.coach].name) + '</strong> · ' + D.LANGS[s.lang].label + ' · ' + s.level + '<small>' + relDay(s.date) + ' · ' + fmtLong(s.spokenSec) + '</small></div>' + playBtn(s) + '<div class="p mono" style="font-size:11px">' + (s.metrics.wpm || '–') + '</div></div>').join('') : '<div class="empty">' + t.noCalls + '</div>') + '</div>';
     const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
     const donut = '<div class="card donut" style="border-radius:24px"><div class="ring-c" style="background:conic-gradient(' + conic + ')"><i></i></div><div class="legend">' + share.map((s) => '<div><i style="background:' + cols[s.l] + '"></i>' + esc(cap(langName(s.l))) + ' ' + s.pct + ' %</div>').join('') + '</div></div>';
     const errCard = '<div class="card" style="border-radius:24px"><div style="font-size:14px;font-weight:700;margin-bottom:8px">' + t.frequentErrors + '</div>' + (errs.length ? '<div class="err-list">' + errs.map((e, i) => '<div>' + (i + 1) + '. ' + esc(e[0]) + ' <span>×' + e[1] + '</span></div>').join('') + '</div>' : '<div class="sub">' + t.errorsSoon + '</div>') + (notebook.length ? '<button class="btn btn-primary btn-block sm" style="margin-top:14px" data-action="quiz">🎯 ' + t.testNotebook + '</button>' : '') + '</div>';
@@ -793,6 +868,22 @@
       case 'next-turn': nextTurn(); break;
       case 'overlay': S.overlay = v === 'close' || S.overlay === v ? null : v; render(); break;
       case 'play': { const p = document.getElementById('player'); if (p) { if (p.paused) { p.play(); b.textContent = '❚❚'; p.onended = () => { b.textContent = '▶'; }; } else { p.pause(); b.textContent = '▶'; } } break; }
+      case 'play-history': playHistory(b.dataset.session); break;
+      case 'clear-recordings': {
+        if (!S.confirmingClear) { S.confirmingClear = true; clearTimeout(S.confirmClearTimer); S.confirmClearTimer = setTimeout(() => { S.confirmingClear = false; renderIfScreen('settings'); }, 4000); render(); break; }
+        clearTimeout(S.confirmClearTimer); S.confirmingClear = false;
+        DST_REC.deleteAll().then((ok) => {
+          if (ok) {
+            sessions.forEach((s) => { delete s.recordings; });
+            store.set('dst.sessions', sessions);
+            S.recUsage = undefined;
+            toast(T().recordingsCleared);
+          } else toast(T().recordingsClearFailed);
+          renderIfScreen('settings');
+        });
+        render();
+        break;
+      }
       case 'save-notebook': saveToNotebook(); break;
       case 'remind': { const d = new Date(); d.setDate(d.getDate() + 1); settings.reminder = { coach: settings.coach, date: dayKey(d) }; saveSettings(); toast(T().willWait(coach().name)); if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); break; }
       case 'mic-help': toast(T().micHelpToast, 4500); break;

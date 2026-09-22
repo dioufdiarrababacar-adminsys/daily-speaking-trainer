@@ -334,6 +334,8 @@ s, .strike { text-decoration: line-through; color: var(--strike); }
 .call-row .avatar-box { width: 42px; height: 42px; border-radius: 14px; flex: none; }
 .call-row .m { flex: 1; font-size: 14px; } .call-row .m small { display: block; font-size: 12px; color: var(--muted); }
 .call-row .p { width: 36px; height: 36px; border-radius: 12px; background: var(--ink-06); display: flex; align-items: center; justify-content: center; flex: none; }
+.call-row .rec-play { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: flex; align-items: center; justify-content: center; font-size: 12px; flex: none; }
+.call-row .rec-play.on { background: var(--coral); }
 .note { background: var(--surface); border-radius: 20px; padding: 14px 16px; text-align: left; width: 100%; }
 .note .t { font-size: 16px; line-height: 1.45; } .note .meta { font-size: 12px; color: var(--muted); margin-top: 6px; font-family: var(--font-mono); }
 .quiz { background: var(--surface); border-radius: 24px; padding: 22px; display: flex; flex-direction: column; gap: 12px; text-align: center; }

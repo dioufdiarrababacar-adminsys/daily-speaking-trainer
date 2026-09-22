@@ -13,11 +13,11 @@
 - **Appel** : le coach lit le sujet à voix haute (synthèse vocale du navigateur, bouche animée), puis tu parles. Le chrono ne démarre que quand tu commences à parler. Forme d'onde en direct, réactions du coach, panneaux « Pistes » et « Vocabulaire » (mot + explication).
 - **Feedback** : mesures locales (mots/min, hésitations, temps de parole réel) + corrections, points forts, tournures à réutiliser et question de relance générés par Gemini si le serveur tourne. Jusqu'à 3 tours par appel.
 - **Fin d'appel** : récap, réécoute et téléchargement de l'enregistrement, sauvegarde des corrections dans le carnet, rappel pour le lendemain.
-- **Progression** : série, record, minutes par semaine, calendrier du mois, répartition par langue, erreurs fréquentes, derniers appels.
+- **Progression** : série, record, minutes par semaine, calendrier du mois, répartition par langue, erreurs fréquentes, derniers appels — avec un bouton pour réécouter chaque appel passé (tous les tours enregistrés, à la suite).
 - **Carnet** : toutes les corrections, filtrables par langue, avec un mode « Me tester dessus ».
-- **Personnaliser** : centres d'intérêt (pilotent le choix des sujets), objectif, thème clair/sombre/système, confidentialité (envoi de la transcription ou mode 100 % local).
+- **Personnaliser** : centres d'intérêt (pilotent le choix des sujets), objectif, thème clair/sombre/système, confidentialité (envoi de la transcription ou mode 100 % local, garder ou non les enregistrements, espace utilisé et bouton pour tout vider).
 
-Tout est stocké dans le `localStorage` du navigateur. Rien ne part vers un serveur en mode local.
+Statistiques et réglages sont stockés dans le `localStorage` du navigateur ; les enregistrements audio (un par tour de parole, gardés indéfiniment) dans une base IndexedDB locale, `dst-recordings`. Rien ne part vers un serveur en mode local, et l'audio n'est jamais envoyé nulle part, quel que soit ce réglage.
 
 ---
 
@@ -62,6 +62,7 @@ Les fonctions Netlify gratuites sont limitées à 10 s : la fonction borne chaqu
 | Voix du coach (synthèse vocale) | oui | oui | oui |
 | Voix « naturelles » (neurales) | Edge : oui · Chrome : voix Google en ligne | non | oui |
 | Transcription (Web Speech API) | oui | non | partiel |
+| Historique audio (IndexedDB) | oui | oui | partiel — bugs connus sur d'anciennes versions pour stocker de gros enregistrements |
 
 Sans transcription, il n'y a ni mots/min, ni hésitations, ni corrections IA. Chrome ou Edge sont donc recommandés.
 
@@ -90,6 +91,7 @@ Le chrono démarre à la première détection de voix (seuil sur le niveau du mi
     ├── avatar.js        # 8 identités × 7 expressions, couches SVG animables
     ├── data.js          # 50 sujets, pistes, vocabulaire (3 langues × 3 paliers)
     ├── i18n.js          # textes de l'interface en FR / EN / ES
+    ├── recordings.js    # historique audio (IndexedDB) : un enregistrement par tour, gardé indéfiniment
     └── app.js           # machine à états, audio, voix, écrans, stockage
 ```
 
