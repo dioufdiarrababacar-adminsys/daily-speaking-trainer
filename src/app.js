@@ -936,5 +936,9 @@
   window.addEventListener('beforeunload', () => { if (S.call && S.call.phase === 'speaking') audio.close(); });
 
   applyTheme();
-  render();
+  // L'écran de chargement (#boot, statique dans index.html) reste visible au moins BOOT_MIN_MS,
+  // même si l'app est prête avant : performance.now() ici inclut déjà le temps de chargement de la
+  // page et des scripts précédents, donc le délai restant est souvent très court, voire nul.
+  const BOOT_MIN_MS = 4000;
+  setTimeout(render, Math.max(0, BOOT_MIN_MS - performance.now()));
 })();
