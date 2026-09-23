@@ -25,7 +25,7 @@
   // ============================================================ État
   const S = {
     screen: 'home', overlay: null, call: null, quiz: null, notebookFilter: 'all', aiAvailable: null, addingInterest: false, toast: null,
-    recUsage: undefined, confirmingClear: false, confirmClearTimer: null,
+    recUsage: undefined, confirmingClear: false, confirmClearTimer: null, confirmDeleteSession: null, confirmDeleteTimer: null,
     // Lecture de l'historique audio (écran Progression) : au plus un <audio> détaché à la fois, jamais inséré dans le DOM
     // (donc jamais coupé par un re-render qui remplace $app.innerHTML), un `token` invalide les résolutions obsolètes
     // si l'utilisateur enchaîne les clics avant qu'un blob ait fini de se charger.
@@ -811,7 +811,10 @@
     const playBtn = (s) => (s.recordings && s.recordings.length)
       ? '<button class="rec-play' + (historyPlaying(s) ? ' on' : '') + '" data-action="play-history" data-session="' + s.id + '" aria-label="' + t.playCall + '">' + (historyPlaying(s) ? '❚❚' : '▶') + '</button>'
       : '';
-    const calls = '<div style="display:flex;flex-direction:column;gap:8px">' + (last.length ? last.map((s) => '<div class="call-row">' + avatar(s.coach, 'neutral') + '<div class="m"><strong>' + esc(AV.PEOPLE[s.coach].name) + '</strong> · ' + D.LANGS[s.lang].label + ' · ' + s.level + '<small>' + relDay(s.date) + ' · ' + fmtLong(s.spokenSec) + '</small></div>' + playBtn(s) + '<div class="p mono" style="font-size:11px">' + (s.metrics.wpm || '–') + '</div></div>').join('') : '<div class="empty">' + t.noCalls + '</div>') + '</div>';
+    const delBtn = (s) => (s.recordings && s.recordings.length)
+      ? '<button class="rec-del' + (S.confirmDeleteSession === s.id ? ' armed' : '') + '" data-action="delete-history" data-session="' + s.id + '" aria-label="' + (S.confirmDeleteSession === s.id ? t.confirmDeleteRecording : t.deleteRecording) + '">🗑</button>'
+      : '';
+    const calls = '<div style="display:flex;flex-direction:column;gap:8px">' + (last.length ? last.map((s) => '<div class="call-row">' + avatar(s.coach, 'neutral') + '<div class="m"><strong>' + esc(AV.PEOPLE[s.coach].name) + '</strong> · ' + D.LANGS[s.lang].label + ' · ' + s.level + '<small>' + relDay(s.date) + ' · ' + fmtLong(s.spokenSec) + '</small></div>' + playBtn(s) + delBtn(s) + '<div class="p mono" style="font-size:11px">' + (s.metrics.wpm || '–') + '</div></div>').join('') : '<div class="empty">' + t.noCalls + '</div>') + '</div>';
     const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
     const donut = '<div class="card donut" style="border-radius:24px"><div class="ring-c" style="background:conic-gradient(' + conic + ')"><i></i></div><div class="legend">' + share.map((s) => '<div><i style="background:' + cols[s.l] + '"></i>' + esc(cap(langName(s.l))) + ' ' + s.pct + ' %</div>').join('') + '</div></div>';
     const errCard = '<div class="card" style="border-radius:24px"><div style="font-size:14px;font-weight:700;margin-bottom:8px">' + t.frequentErrors + '</div>' + (errs.length ? '<div class="err-list">' + errs.map((e, i) => '<div>' + (i + 1) + '. ' + esc(e[0]) + ' <span>×' + e[1] + '</span></div>').join('') + '</div>' : '<div class="sub">' + t.errorsSoon + '</div>') + (notebook.length ? '<button class="btn btn-primary btn-block sm" style="margin-top:14px" data-action="quiz">🎯 ' + t.testNotebook + '</button>' : '') + '</div>';
@@ -869,6 +872,25 @@
       case 'overlay': S.overlay = v === 'close' || S.overlay === v ? null : v; render(); break;
       case 'play': { const p = document.getElementById('player'); if (p) { if (p.paused) { p.play(); b.textContent = '❚❚'; p.onended = () => { b.textContent = '▶'; }; } else { p.pause(); b.textContent = '▶'; } } break; }
       case 'play-history': playHistory(b.dataset.session); break;
+      case 'delete-history': {
+        const sid = b.dataset.session;
+        if (S.confirmDeleteSession !== sid) {
+          S.confirmDeleteSession = sid; clearTimeout(S.confirmDeleteTimer);
+          S.confirmDeleteTimer = setTimeout(() => { S.confirmDeleteSession = null; renderIfScreen('progress'); }, 4000);
+          render(); break;
+        }
+        clearTimeout(S.confirmDeleteTimer); S.confirmDeleteSession = null;
+        if (S.playback.sessionId === sid) stopPlayback();
+        const s = sessions.find((x) => x.id === sid);
+        const ids = s && s.recordings ? s.recordings.map((r) => r.id) : [];
+        (ids.length ? DST_REC.deleteMany(ids) : Promise.resolve(true)).then((ok) => {
+          if (ok && s) { delete s.recordings; store.set('dst.sessions', sessions); S.recUsage = undefined; toast(T().recordingDeleted); }
+          else toast(T().recordingDeleteFailed);
+          renderIfScreen('progress');
+        });
+        render();
+        break;
+      }
       case 'clear-recordings': {
         if (!S.confirmingClear) { S.confirmingClear = true; clearTimeout(S.confirmClearTimer); S.confirmClearTimer = setTimeout(() => { S.confirmingClear = false; renderIfScreen('settings'); }, 4000); render(); break; }
         clearTimeout(S.confirmClearTimer); S.confirmingClear = false;

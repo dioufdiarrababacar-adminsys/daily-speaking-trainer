@@ -67,6 +67,21 @@ window.DST_REC = (function () {
     });
   }
 
+  // Supprime uniquement les ids donnés (ex. tous les tours d'un seul appel), le reste de l'historique reste intact.
+  async function deleteMany(ids) {
+    const s = await store('readwrite');
+    if (!s || !ids || !ids.length) return false;
+    return new Promise((resolve) => {
+      let done = 0, ok = true;
+      ids.forEach((id) => {
+        const req = s.delete(id);
+        const tick = () => { done++; if (done === ids.length) resolve(ok); };
+        req.onsuccess = tick;
+        req.onerror = () => { ok = false; tick(); };
+      });
+    });
+  }
+
   // Somme exacte calculée sur nos propres enregistrements (pas navigator.storage.estimate(),
   // qui couvre tout le stockage de l'origine et est peu fiable selon les navigateurs).
   async function usage() {
@@ -85,5 +100,5 @@ window.DST_REC = (function () {
     });
   }
 
-  return { isAvailable, save, getBlob, deleteAll, usage };
+  return { isAvailable, save, getBlob, deleteAll, deleteMany, usage };
 })();
