@@ -25,11 +25,12 @@
   // ============================================================ État
   const S = {
     screen: 'home', overlay: null, call: null, quiz: null, notebookFilter: 'all', aiAvailable: null, addingInterest: false, toast: null,
-    recUsage: undefined, confirmingClear: false, confirmClearTimer: null, confirmDeleteSession: null, confirmDeleteTimer: null,
+    recUsage: undefined, confirmingClear: false, confirmClearTimer: null, confirmDeleteRec: null, confirmDeleteRecTimer: null,
+    expandedSession: null,
     // Lecture de l'historique audio (écran Progression) : au plus un <audio> détaché à la fois, jamais inséré dans le DOM
     // (donc jamais coupé par un re-render qui remplace $app.innerHTML), un `token` invalide les résolutions obsolètes
     // si l'utilisateur enchaîne les clics avant qu'un blob ait fini de se charger.
-    playback: { token: 0, sessionId: null, idx: 0, audio: null, url: null }
+    playback: { token: 0, recId: null, audio: null, url: null }
   };
 
   // ============================================================ Utilitaires
@@ -498,7 +499,7 @@
   }
 
   // ============================================================ Rendu
-  function go(screen) { if (S.screen === 'progress' && screen !== 'progress' && S.playback.sessionId) stopPlayback(); S.screen = screen; render(); }
+  function go(screen) { if (S.screen === 'progress' && screen !== 'progress' && S.playback.recId) stopPlayback(); S.screen = screen; render(); }
   function renderIfScreen(s) { if (S.screen === s) render(); }
 
   function render() {
@@ -749,50 +750,48 @@
       '</div></div>';
   }
 
-  // ---------- Historique audio (lecture depuis Progression)
+  // ---------- Historique audio (lecture depuis Progression, un tour à la fois — jamais fusionnés)
   // Un seul <audio> vivant à la fois, jamais dans le DOM (donc jamais coupé par un re-render). `token`
-  // ignore les résolutions IndexedDB devenues obsolètes (double-clic pendant un chargement en cours).
+  // ignore les résolutions IndexedDB devenues obsolètes (clic sur un autre tour pendant un chargement en cours).
   function stopPlayback() {
     S.playback.token++;
     if (S.playback.audio) { try { S.playback.audio.pause(); } catch {} S.playback.audio.onended = null; }
     if (S.playback.url) URL.revokeObjectURL(S.playback.url);
-    S.playback.sessionId = null; S.playback.idx = 0; S.playback.audio = null; S.playback.url = null;
+    S.playback.recId = null; S.playback.audio = null; S.playback.url = null;
   }
-  function playHistory(sessionId) {
-    if (S.playback.sessionId === sessionId && S.playback.audio) {
+  function playTurn(recId) {
+    if (S.playback.recId === recId && S.playback.audio) {
       if (S.playback.audio.paused) S.playback.audio.play(); else S.playback.audio.pause();
       render();
       return;
     }
     stopPlayback();
-    const s = sessions.find((x) => x.id === sessionId);
-    if (!s || !s.recordings || !s.recordings.length) return;
     const myToken = S.playback.token;
-    S.playback.sessionId = sessionId; S.playback.idx = 0;
+    S.playback.recId = recId;
     render();
-    playHistoryTurn(s, myToken);
-  }
-  async function playHistoryTurn(s, myToken) {
-    if (myToken !== S.playback.token) return;
-    const rec = s.recordings[S.playback.idx];
-    if (!rec) { stopPlayback(); render(); return; }
-    const blob = await DST_REC.getBlob(rec.id);
-    if (myToken !== S.playback.token) return;
-    if (!blob) { stopPlayback(); render(); return; }
-    const url = URL.createObjectURL(blob);
-    const el = new Audio(url);
-    S.playback.audio = el; S.playback.url = url;
-    el.onended = () => {
+    DST_REC.getBlob(recId).then((blob) => {
       if (myToken !== S.playback.token) return;
-      URL.revokeObjectURL(url);
-      S.playback.idx += 1;
-      if (S.playback.idx < s.recordings.length) playHistoryTurn(s, myToken);
-      else { stopPlayback(); render(); }
-    };
-    el.play();
-    render();
+      if (!blob) { stopPlayback(); render(); return; }
+      const url = URL.createObjectURL(blob);
+      const el = new Audio(url);
+      S.playback.audio = el; S.playback.url = url;
+      el.onended = () => { if (myToken === S.playback.token) { stopPlayback(); render(); } };
+      el.play();
+      render();
+    });
   }
-  const historyPlaying = (s) => S.playback.sessionId === s.id && S.playback.audio && !S.playback.audio.paused;
+  const turnPlaying = (id) => S.playback.recId === id && S.playback.audio && !S.playback.audio.paused;
+  function turnList(s) {
+    const t = T();
+    return '<div class="rec-turns">' + s.recordings.map((r) =>
+      '<div class="rec-turn">' +
+        '<span class="lbl">' + esc(t.turn(r.turn)) + '</span>' +
+        '<span class="mono dur">' + fmt(r.sec) + '</span>' +
+        '<button class="rec-play sm' + (turnPlaying(r.id) ? ' on' : '') + '" data-action="play-turn" data-rec="' + r.id + '" aria-label="' + t.playTurn + '">' + (turnPlaying(r.id) ? '❚❚' : '▶') + '</button>' +
+        '<button class="rec-del sm' + (S.confirmDeleteRec === r.id ? ' armed' : '') + '" data-action="delete-turn" data-rec="' + r.id + '" data-session="' + s.id + '" aria-label="' + (S.confirmDeleteRec === r.id ? t.confirmDeleteRecording : t.deleteTurnRecording) + '">🗑</button>' +
+      '</div>'
+    ).join('') + '</div>';
+  }
 
   // ---------- Progression
   function progress() {
@@ -810,13 +809,10 @@
     const last = sessions.slice(-3).reverse();
     const monthName = now.toLocaleDateString(lang().bcp, { month: 'long', year: isDesktop() ? 'numeric' : undefined });
     const calendar = '<div class="card" style="border-radius:24px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-size:14px;font-weight:700;text-transform:capitalize">' + monthName + '</div><div class="mono" style="font-size:13px;color:var(--muted)">' + t.practiced(practiced) + '</div></div><div class="heat">' + heat + '</div></div>';
-    const playBtn = (s) => (s.recordings && s.recordings.length)
-      ? '<button class="rec-play' + (historyPlaying(s) ? ' on' : '') + '" data-action="play-history" data-session="' + s.id + '" aria-label="' + t.playCall + '">' + (historyPlaying(s) ? '❚❚' : '▶') + '</button>'
+    const toggleBtn = (s) => (s.recordings && s.recordings.length)
+      ? '<button class="rec-toggle" data-action="toggle-history" data-session="' + s.id + '" aria-label="' + t.showTurns(s.recordings.length) + '" aria-expanded="' + (S.expandedSession === s.id) + '">' + s.recordings.length + (S.expandedSession === s.id ? ' ▲' : ' ▼') + '</button>'
       : '';
-    const delBtn = (s) => (s.recordings && s.recordings.length)
-      ? '<button class="rec-del' + (S.confirmDeleteSession === s.id ? ' armed' : '') + '" data-action="delete-history" data-session="' + s.id + '" aria-label="' + (S.confirmDeleteSession === s.id ? t.confirmDeleteRecording : t.deleteRecording) + '">🗑</button>'
-      : '';
-    const calls = '<div style="display:flex;flex-direction:column;gap:8px">' + (last.length ? last.map((s) => '<div class="call-row">' + avatar(s.coach, 'neutral') + '<div class="m"><strong>' + esc(AV.PEOPLE[s.coach].name) + '</strong> · ' + D.LANGS[s.lang].label + ' · ' + s.level + '<small>' + relDay(s.date) + ' · ' + fmtLong(s.spokenSec) + '</small></div>' + playBtn(s) + delBtn(s) + '<div class="p mono" style="font-size:11px">' + (s.metrics.wpm || '–') + '</div></div>').join('') : '<div class="empty">' + t.noCalls + '</div>') + '</div>';
+    const calls = '<div style="display:flex;flex-direction:column;gap:8px">' + (last.length ? last.map((s) => '<div class="call-row">' + avatar(s.coach, 'neutral') + '<div class="m"><strong>' + esc(AV.PEOPLE[s.coach].name) + '</strong> · ' + D.LANGS[s.lang].label + ' · ' + s.level + '<small>' + relDay(s.date) + ' · ' + fmtLong(s.spokenSec) + '</small></div>' + toggleBtn(s) + '<div class="p mono" style="font-size:11px">' + (s.metrics.wpm || '–') + '</div></div>' + (S.expandedSession === s.id && s.recordings && s.recordings.length ? turnList(s) : '')).join('') : '<div class="empty">' + t.noCalls + '</div>') + '</div>';
     const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
     const donut = '<div class="card donut" style="border-radius:24px"><div class="ring-c" style="background:conic-gradient(' + conic + ')"><i></i></div><div class="legend">' + share.map((s) => '<div><i style="background:' + cols[s.l] + '"></i>' + esc(cap(langName(s.l))) + ' ' + s.pct + ' %</div>').join('') + '</div></div>';
     const errCard = '<div class="card" style="border-radius:24px"><div style="font-size:14px;font-weight:700;margin-bottom:8px">' + t.frequentErrors + '</div>' + (errs.length ? '<div class="err-list">' + errs.map((e, i) => '<div>' + (i + 1) + '. ' + esc(e[0]) + ' <span>×' + e[1] + '</span></div>').join('') + '</div>' : '<div class="sub">' + t.errorsSoon + '</div>') + (notebook.length ? '<button class="btn btn-primary btn-block sm" style="margin-top:14px" data-action="quiz">🎯 ' + t.testNotebook + '</button>' : '') + '</div>';
@@ -873,21 +869,26 @@
       case 'next-turn': nextTurn(); break;
       case 'overlay': S.overlay = v === 'close' || S.overlay === v ? null : v; render(); break;
       case 'play': { const p = document.getElementById('player'); if (p) { if (p.paused) { p.play(); b.textContent = '❚❚'; p.onended = () => { b.textContent = '▶'; }; } else { p.pause(); b.textContent = '▶'; } } break; }
-      case 'play-history': playHistory(b.dataset.session); break;
-      case 'delete-history': {
-        const sid = b.dataset.session;
-        if (S.confirmDeleteSession !== sid) {
-          S.confirmDeleteSession = sid; clearTimeout(S.confirmDeleteTimer);
-          S.confirmDeleteTimer = setTimeout(() => { S.confirmDeleteSession = null; renderIfScreen('progress'); }, 4000);
+      case 'toggle-history': S.expandedSession = S.expandedSession === b.dataset.session ? null : b.dataset.session; render(); break;
+      case 'play-turn': playTurn(b.dataset.rec); break;
+      case 'delete-turn': {
+        const recId = b.dataset.rec, sid = b.dataset.session;
+        if (S.confirmDeleteRec !== recId) {
+          S.confirmDeleteRec = recId; clearTimeout(S.confirmDeleteRecTimer);
+          S.confirmDeleteRecTimer = setTimeout(() => { S.confirmDeleteRec = null; renderIfScreen('progress'); }, 4000);
           render(); break;
         }
-        clearTimeout(S.confirmDeleteTimer); S.confirmDeleteSession = null;
-        if (S.playback.sessionId === sid) stopPlayback();
+        clearTimeout(S.confirmDeleteRecTimer); S.confirmDeleteRec = null;
+        if (S.playback.recId === recId) stopPlayback();
         const s = sessions.find((x) => x.id === sid);
-        const ids = s && s.recordings ? s.recordings.map((r) => r.id) : [];
-        (ids.length ? DST_REC.deleteMany(ids) : Promise.resolve(true)).then((ok) => {
-          if (ok && s) { delete s.recordings; store.set('dst.sessions', sessions); S.recUsage = undefined; toast(T().recordingDeleted); }
-          else toast(T().recordingDeleteFailed);
+        DST_REC.deleteMany([recId]).then((ok) => {
+          if (ok && s && s.recordings) {
+            s.recordings = s.recordings.filter((r) => r.id !== recId);
+            if (!s.recordings.length) delete s.recordings;
+            store.set('dst.sessions', sessions);
+            S.recUsage = undefined;
+            toast(T().recordingDeleted);
+          } else toast(T().recordingDeleteFailed);
           renderIfScreen('progress');
         });
         render();
