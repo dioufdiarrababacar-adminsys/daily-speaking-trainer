@@ -391,6 +391,7 @@
     const recordingIdPromise = (settings.saveRecordings && blob && blob.size)
       ? DST_REC.save({ sessionId: c.id, turn: c.turn, blob, mimeType: blob.type, durationSec: c.elapsed })
       : Promise.resolve(null);
+    recordingIdPromise.then((id) => console.info('[dst] tour ' + c.turn + ' : ' + (id ? 'enregistré (' + id + ', ' + (blob ? blob.size : 0) + ' o)' : blob && blob.size ? 'ÉCHEC de sauvegarde' : 'pas de blob ou saveRecordings désactivé')));
     const text = (c.transcript + ' ' + c.interim).trim();
     const words = text ? text.split(/\s+/).length : 0;
     const fillers = text ? (text.match(lang().fillers) || []).length : 0;
@@ -473,6 +474,7 @@
     if (!c.saved) {
       c.saved = true;
       const recIds = await Promise.all(c.turns.map((t) => t.recordingIdPromise || Promise.resolve(null)));
+      console.info('[dst] fin d\'appel : ' + recIds.filter(Boolean).length + '/' + c.turns.length + ' tour(s) avec enregistrement', recIds);
       sessions.push({
         id: c.id, date: new Date().toISOString(), coach: settings.coach, lang: settings.lang, level: settings.level,
         wallSec: Math.round((Date.now() - c.wallStart) / 1000), spokenSec: Math.round(c.turns.reduce((a, t) => a + t.spokenSec, 0)),
